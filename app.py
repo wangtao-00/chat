@@ -1,6 +1,4 @@
-以下是使用Streamlit进行界面设计的修改后的完整代码：
 
-```python
 import streamlit as st
 import re
 import datetime

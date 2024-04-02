@@ -1,7 +1,7 @@
 import re
 import datetime
-import yaml
 import streamlit as st
+import yaml
 
 from models import OpenAIModel, AnthropicModel, HuggingFaceLlama2Model
 from tools import Tools
@@ -14,6 +14,14 @@ MODELS = {
     "Claude 2": AnthropicModel("claude-2", 100000),
     "Llama 2": HuggingFaceLlama2Model("meta-llama/Llama-2-70b-chat-hf", 4096),
 }
+
+# Load configuration from config.yaml.
+#   verbose: should output the prompts to stdout
+#   examples: list of example questions
+#   enabled_models: list of models to enable (names must be in MODELS)
+#   enabled_browsers:  list of browsers to support
+#   temperature: default temperature for LLM
+#   max_actions: maximun number of actions to attempt before aborting
 
 with open("config.yaml", "r") as config_file:
     config = yaml.safe_load(config_file)
@@ -30,6 +38,7 @@ max_actions = config["max_actions"]
 
 llm_tools = Tools(browser=selected_browser)
 
+
 def create_system_message():
     """
     Return system message, including today's date and the available tools.
@@ -44,6 +53,7 @@ def create_system_message():
     message = message.replace("{{TOOLS_PROMPT}}", llm_tools.get_tool_list_for_prompt())
 
     return message
+
 
 def generate(new_user_message, history):
     """
@@ -97,9 +107,10 @@ def generate(new_user_message, history):
             )
 
             partial_response = ""
-
-            for chunk in stream:
-                completion = model.parse_completion(chunk)
+            completion = stream.choices[0].message.content
+            for chunk in range(1):
+                # completion = model.parse_completion(chunk)
+                # completion
 
                 if completion:
                     # Stream each completion to the ChatInterface
@@ -107,11 +118,14 @@ def generate(new_user_message, history):
                     partial_response += completion
                     st.write(full_response)
 
+                    # When we find an Action in the response, stop the
+                    # generation, run the tool specified in the Action,
+                    # and create a new prompt that includes the Results.
                     matches = re.search(ACTION_REGEX, partial_response)
                     if matches:
                         tool = matches.group(2).strip()
                         params = matches.group(3).strip()
-                        
+
                         result = llm_tools.run_tool(tool, params)
 
                         prompt = f"Question: {new_user_message}\n\n"
@@ -122,20 +136,22 @@ def generate(new_user_message, history):
                         # message and previous responses
                         history_token_count = 0
                         for user_message, assistant_response in history:
-                            history_token_count += model.count_tokens(user_message) + model.count_tokens(assistant_response)
+                            history_token_count += model.count_tokens(user_message) + model.count_tokens(
+                                assistant_response)
 
                         prompt_token_count = model.count_tokens(prompt)
                         result_token_count = model.count_tokens(result)
 
-                        available_tokens = int(0.9 * (model.context_size - system_message_token_count - history_token_count - prompt_token_count))
+                        available_tokens = int(0.9 * (
+                                    model.context_size - system_message_token_count - history_token_count - prompt_token_count))
 
                         # Truncate the result if it is longer than the available tokens
                         if result_token_count > available_tokens:
-                            ratio = available_tokens/result_token_count
+                            ratio = available_tokens / result_token_count
                             truncate_result_len = int(len(result) * ratio)
                             result = result[:truncate_result_len]
 
-                            full_response += f"\n\n<span style='color:gray'>*Note:  Only {ratio*100:.0f}% of the result was shown to the model due to context window limits.*</span>\n\n"
+                            full_response += f"\n\n<span style='color:gray'>*Note:  Only {ratio * 100:.0f}% of the result was shown to the model due to context window limits.*</span>\n\n"
                             st.write(full_response)
 
                         prompt += f"Result: {result}\n\n"
@@ -146,11 +162,11 @@ def generate(new_user_message, history):
             # Action in the response
             if re.search(CONCLUSION_REGEX, partial_response) or not re.search(ACTION_REGEX, partial_response):
                 return
-                        
+
             if not partial_response.endswith("\n"):
                 full_response += "\n\n"
                 st.write(full_response)
-            
+
             # Stop when we've exceeded max_actions
             if iteration >= max_actions:
                 full_response += f"<span style='color:red'>*Stopping after running {max_actions} actions.*</span>"
@@ -158,10 +174,11 @@ def generate(new_user_message, history):
                 return
             else:
                 iteration += 1
-    
+
     except Exception as e:
         full_response += f"\n<span style='color:red'>Error: {e}</span>"
         st.write(full_response)
+
 
 # Create Streamlit app
 system_message = create_system_message()
@@ -171,11 +188,33 @@ if verbose:
     print("==============")
     print(system_message)
 
-st.title("LLM Chat Interface")
+st.title("Chatbot")
+
 st.markdown(description)
 
-new_user_message = st.text_input("Enter your message:")
-history = []  # You may implement history functionality here
+# Define example questions
+st.sidebar.subheader("Example Questions")
+example_index = st.sidebar.selectbox("Select an example question", range(len(examples)), index=0)
+example_question = examples[example_index]
 
-st.markdown("### Response:")
-generate(new_user_message, history)
+# Define options
+st.sidebar.subheader("Options")
+
+# Model selector
+st.sidebar.write("Model")
+selected_model = st.sidebar.radio("Choose a model", enabled_models, index=0)
+
+# Browser selector
+st.sidebar.write("Web Browser")
+selected_browser = st.sidebar.radio("Choose a web browser", enabled_browsers, index=0)
+
+# Temperature selector
+st.sidebar.write("Temperature")
+temperature = st.sidebar.slider("Select temperature", min_value=0.1, max_value=1.0, step=0.1, value=temperature)
+
+# Chat interface
+st.subheader("Chat Interface")
+new_user_message = st.text_input("User Message", value=example_question)
+if st.button("Send"):
+    history = []  # Placeholder for history
+    generate(new_user_message, history)

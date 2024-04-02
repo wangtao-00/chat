@@ -1,8 +1,7 @@
-
-import streamlit as st
 import re
 import datetime
 import yaml
+import streamlit as st
 
 from models import OpenAIModel, AnthropicModel, HuggingFaceLlama2Model
 from tools import Tools
@@ -15,14 +14,6 @@ MODELS = {
     "Claude 2": AnthropicModel("claude-2", 100000),
     "Llama 2": HuggingFaceLlama2Model("meta-llama/Llama-2-70b-chat-hf", 4096),
 }
-
-# Load configuration from config.yaml.
-#   verbose: should output the prompts to stdout
-#   examples: list of example questions
-#   enabled_models: list of models to enable (names must be in MODELS)
-#   enabled_browsers:  list of browsers to support
-#   temperature: default temperature for LLM
-#   max_actions: maximun number of actions to attempt before aborting
 
 with open("config.yaml", "r") as config_file:
     config = yaml.safe_load(config_file)
@@ -39,7 +30,6 @@ max_actions = config["max_actions"]
 
 llm_tools = Tools(browser=selected_browser)
 
-
 def create_system_message():
     """
     Return system message, including today's date and the available tools.
@@ -55,11 +45,10 @@ def create_system_message():
 
     return message
 
-
 def generate(new_user_message, history):
     """
-    Generate a response from the LLM to the user message while using the
-    available tools.  The history contains a list of prior
+    Generate a response from the LLM to the user message while using the 
+    available tools.  The history contains a list of prior 
     (user_message, assistant_response) pairs from the chat.
     This function is intended to be called by a Gradio ChatInterface.
 
@@ -73,7 +62,7 @@ def generate(new_user_message, history):
     of web pages, so we only include the Result for the most recent Action.
 
     Note that Claude 2 supports a 100k context window, but in practice, I've
-    found that the Anthropic API will return a rate limit error if I actually
+    found that the Anthropic API will return a rate limit error if I actually 
     try to send a large number of tokens, so unfortuantely I use the same logic
     with Claude 2 as the other models.
     """
@@ -108,24 +97,21 @@ def generate(new_user_message, history):
             )
 
             partial_response = ""
-            completion = stream.choices[0].message.content
-            for chunk in range(1):
-                # completion = model.parse_completion(chunk)
-                # completion
+
+            for chunk in stream:
+                completion = model.parse_completion(chunk)
 
                 if completion:
                     # Stream each completion to the ChatInterface
                     full_response += completion
                     partial_response += completion
+                    st.write(full_response)
 
-                    # When we find an Action in the response, stop the
-                    # generation, run the tool specified in the Action,
-                    # and create a new prompt that includes the Results.
                     matches = re.search(ACTION_REGEX, partial_response)
                     if matches:
                         tool = matches.group(2).strip()
                         params = matches.group(3).strip()
-
+                        
                         result = llm_tools.run_tool(tool, params)
 
                         prompt = f"Question: {new_user_message}\n\n"
@@ -136,43 +122,46 @@ def generate(new_user_message, history):
                         # message and previous responses
                         history_token_count = 0
                         for user_message, assistant_response in history:
-                            history_token_count += model.count_tokens(user_message) + model.count_tokens(
-                                assistant_response)
+                            history_token_count += model.count_tokens(user_message) + model.count_tokens(assistant_response)
 
                         prompt_token_count = model.count_tokens(prompt)
                         result_token_count = model.count_tokens(result)
 
-                        available_tokens = int(0.9 * (
-                                    model.context_size - system_message_token_count - history_token_count - prompt_token_count))
+                        available_tokens = int(0.9 * (model.context_size - system_message_token_count - history_token_count - prompt_token_count))
 
                         # Truncate the result if it is longer than the available tokens
                         if result_token_count > available_tokens:
-                            ratio = available_tokens / result_token_count
+                            ratio = available_tokens/result_token_count
                             truncate_result_len = int(len(result) * ratio)
                             result = result[:truncate_result_len]
 
-                            full_response += f"\n\n<span style='color:gray'>*Note:  Only {ratio * 100:.0f}% of the result was shown to the model due to context window limits.*</span>\n\n"
+                            full_response += f"\n\n<span style='color:gray'>*Note:  Only {ratio*100:.0f}% of the result was shown to the model due to context window limits.*</span>\n\n"
+                            st.write(full_response)
 
                         prompt += f"Result: {result}\n\n"
 
                         break
 
-            # Stop when we either see the Conclusion or we cannot find an
+            # Stop when we either see the Conclusion or we cannot find an 
             # Action in the response
             if re.search(CONCLUSION_REGEX, partial_response) or not re.search(ACTION_REGEX, partial_response):
                 return
-
+                        
+            if not partial_response.endswith("\n"):
+                full_response += "\n\n"
+                st.write(full_response)
+            
             # Stop when we've exceeded max_actions
             if iteration >= max_actions:
                 full_response += f"<span style='color:red'>*Stopping after running {max_actions} actions.*</span>"
+                st.write(full_response)
                 return
             else:
                 iteration += 1
-
+    
     except Exception as e:
         full_response += f"\n<span style='color:red'>Error: {e}</span>"
-        return
-
+        st.write(full_response)
 
 # Create Streamlit app
 system_message = create_system_message()
@@ -182,23 +171,11 @@ if verbose:
     print("==============")
     print(system_message)
 
+st.title("LLM Chat Interface")
 st.markdown(description)
 
-new_user_message = st.text_input("Input:", "")
-history = []  # You need to maintain history between requests
+new_user_message = st.text_input("Enter your message:")
+history = []  # You may implement history functionality here
 
-if st.button("Submit"):
-    response = generate(new_user_message, history)
-    st.markdown(response)
-
-# Show options if there are multiple models enabled
-multiple_models_enabled = len(enabled_models) > 1
-
-if multiple_models_enabled:
-    selected_model = st.selectbox("Model", enabled_models)
-
-temperature = st.slider("Temperature", min_value=0.1, max_value=1.0, step=0.1, value=temperature
-
-                        )
-
-st.write("Note: The browser option is not available in this Streamlit version.")
+st.markdown("### Response:")
+generate(new_user_message, history)

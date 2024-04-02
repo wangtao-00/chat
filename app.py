@@ -32,6 +32,8 @@ description = config["description"]
 examples = config["examples"]
 enabled_models = config["enabled_models"]
 selected_model = enabled_models[0]
+enabled_browsers = config["enabled_browsers"]
+selected_browser = enabled_browsers[0]
 temperature = config["temperature"]
 max_actions = config["max_actions"]
 
